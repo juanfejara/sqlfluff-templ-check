@@ -1,0 +1,1 @@
+include src/sqlfluff_force_dbt_ref/plugin_default_config.cfg
