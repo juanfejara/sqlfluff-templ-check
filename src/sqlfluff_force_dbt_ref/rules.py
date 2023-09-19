@@ -5,8 +5,9 @@ This uses the rules API supported from 0.4.0 onwards.
 
 import re
 from sqlfluff.core.parser.segments import BaseSegment
-from sqlfluff.core.rules import BaseRule, LintResult, RuleContext
+from sqlfluff.core.rules import BaseRule, EvalResultType, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
+from typing import List
 
 
 class Rule_SD01(BaseRule):
@@ -62,10 +63,11 @@ class Rule_SD01(BaseRule):
             # Otherwise recurse
             return cls._find_raw_at_src_idx(seg, src_idx)
 
-    def _eval(self, context: RuleContext):
+    def _eval(self, context: RuleContext) -> EvalResultType:
         flag_review_next = False
+        result: List[LintResult] = []
         if not context.templated_file:
-            return None
+            return result
 
         for raw_slice in context.templated_file.raw_sliced:
             # In case of the slice finish with from or join, must search in the next slice
@@ -78,15 +80,16 @@ class Rule_SD01(BaseRule):
                 r"\s+join\s+", raw_slice.raw.lower()
             ):
                 # Exception where use sql fuction extract
-                if re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()):
-                    return None
                 # If the 'from' is followed by a hardcoded table or view
-                raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
-                return LintResult(
-                    anchor=raw_seg,
-                    description=f"Hard code table or view "
-                    f"`{raw_slice.raw.lower()}` not allowed.",
-                )
+                if not re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()):
+                    raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
+                    result.append(
+                        LintResult(
+                            anchor=raw_seg,
+                            description=f"Hard code table or view "
+                            f"`{raw_slice.raw.lower()}` not allowed.",
+                        )
+                    )
             elif flag_review_next:
                 # In case of begin with a new query, it begins with "( select"
                 if re.search(r"^\s*\(\s*select", raw_slice.raw.lower()):
@@ -103,10 +106,13 @@ class Rule_SD01(BaseRule):
                     )
                 ):
                     raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
-                    return LintResult(
-                        anchor=raw_seg,
-                        description=f"Must use ref or source in tamplate, "
-                        f"`{raw_slice.raw}` not allowed.",
+                    result.append(
+                        LintResult(
+                            anchor=raw_seg,
+                            description=f"Must use ref or source in tamplate, "
+                            f"`{raw_slice.raw}` not allowed.",
+                        )
                     )
                 else:
                     flag_review_next = False
+        return result
