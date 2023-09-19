@@ -1,0 +1,45 @@
+rule: SD01
+
+regular_join_reference:
+  pass_str: |
+    select
+      a,
+      b,
+      c
+    from {{ ref('tbl') }}
+    inner join {{ ref('tbl2') }}
+
+regular_from_reference:
+  pass_str: |
+    select
+      a,
+      sum(b)
+    from {{ ref('tbl') }}
+    group by a
+    order by a
+
+regular_join_reference_with_source_instead:
+  pass_str: |
+    select
+      a,
+      b,
+      c
+    from {{ ref('tbl') }}
+    inner join {{ source('compatibility', 'tbl2') }}
+
+regular_from_a_select_with_reference:
+  pass_str: |
+    select
+      a,
+      sum(b)
+    from (select * from {{ ref('tbl') }})
+    group by a
+    order by a
+
+forbidden_hardcoded_table:
+  fail_str: |
+    select
+      bar,
+      baz
+    from tbl
+    order by bar
