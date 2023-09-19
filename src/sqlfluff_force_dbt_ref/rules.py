@@ -77,6 +77,10 @@ class Rule_SD01(BaseRule):
             elif re.search(r"\s+from\s+", raw_slice.raw.lower()) or re.search(
                 r"\s+join\s+", raw_slice.raw.lower()
             ):
+                # Exception where use sql fuction extract
+                if re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()):
+                    return None
+                # If the 'from' is followed by a hardcoded table or view
                 raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
                 return LintResult(
                     anchor=raw_seg,

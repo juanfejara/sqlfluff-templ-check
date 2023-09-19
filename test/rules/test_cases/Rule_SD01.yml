@@ -36,6 +36,16 @@ regular_from_a_select_with_reference:
     group by a
     order by a
 
+regular_extract_exception:
+  pass_str: |
+    select
+      extract(day from a),
+      b,
+      c
+    from {{ ref('tbl') }}
+    inner join {{ ref('tbl2') }}
+
+
 forbidden_hardcoded_table:
   fail_str: |
     select
