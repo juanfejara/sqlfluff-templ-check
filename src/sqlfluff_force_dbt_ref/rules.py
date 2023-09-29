@@ -1,6 +1,4 @@
-"""Rule that force dbt ref in sql FROM.
-
-This uses the rules API supported from 0.4.0 onwards.
+"""Rule that requires dbt ref/source macro in sql FROM.
 """
 
 import re
@@ -79,7 +77,7 @@ class Rule_SD01(BaseRule):
             elif re.search(r"\s+from\s+", raw_slice.raw.lower()) or re.search(
                 r"\s+join\s+", raw_slice.raw.lower()
             ):
-                # Exception where use sql fuction extract
+                # Exception where use sql function extract
                 # If the 'from' is followed by a hardcoded table or view
                 if not re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()):
                     raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)

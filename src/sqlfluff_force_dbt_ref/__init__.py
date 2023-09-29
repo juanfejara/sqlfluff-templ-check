@@ -1,8 +1,3 @@
-"""An example of a custom rule implemented through the plugin system.
-
-This uses the rules API supported from 0.4.0 onwards.
-"""
-
 from sqlfluff.core.plugin import hookimpl
 from sqlfluff.core.rules import BaseRule
 from typing import List, Type

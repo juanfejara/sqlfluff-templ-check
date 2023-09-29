@@ -1,10 +1,10 @@
 # Force dbt ref plugin
 
-This plugin force dbt ref to be used in sql FROM instead of hardcoded tables or views.
+This plugin requires the dbt `ref` or `source` macros to be used in sql `FROM` instead of hardcoded tables or views.
 
-## Intall
+## Install
 
-To install this plugin, you must have sqlfluff, importlib_resources and regex packages.
+To install this plugin, you must have sqlfluff packages.
 
 Add the rule SD01 to the rules in .sqlfluff, ej:
 

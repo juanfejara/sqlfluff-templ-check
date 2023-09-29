@@ -18,6 +18,14 @@ regular_from_reference:
     group by a
     order by a
 
+regular_join_reference_with_source_in_from:
+  pass_str: |
+    select
+      a,
+      b,
+      c
+    from {{ source('compatibility', 'tbl2') }}
+
 regular_join_reference_with_source_instead:
   pass_str: |
     select
