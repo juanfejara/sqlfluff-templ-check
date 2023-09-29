@@ -21,6 +21,3 @@ python -m setup install
 '''sh
 pytest -s
 '''
-
-This interface is supported from version `0.4.0` of
-SQLFluff onwards.
