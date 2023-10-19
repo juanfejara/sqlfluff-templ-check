@@ -61,3 +61,23 @@ forbidden_hardcoded_table:
       baz
     from tbl
     order by bar
+
+
+allowed_alias_reference:
+  pass_str: |
+    with allow_alias as (
+      select
+        bar,
+        baz
+      from {{ ref('tbl') }}
+    )
+    , another_alias as (
+      select
+        bar,
+        baz
+      from {{ ref('tbl2') }}
+    )
+    select
+      bar,
+      baz
+    from allow_alias
