@@ -1,11 +1,21 @@
 """Rule that requires dbt ref/source macro in sql FROM.
 """
 
+from dataclasses import dataclass
+
 import re
 from sqlfluff.core.parser.segments import BaseSegment
 from sqlfluff.core.rules import BaseRule, EvalResultType, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
+from sqlfluff.utils.analysis.query import Query
 from typing import List
+
+
+@dataclass
+class SD01Query(Query):
+    """Query subclass with custom SD01 info."""
+
+    pass
 
 
 class Rule_SD01(BaseRule):
@@ -35,7 +45,12 @@ class Rule_SD01(BaseRule):
     """
 
     groups = ("all",)
-    crawl_behaviour = SegmentSeekerCrawler({"from_clause"})
+    crawl_behaviour = SegmentSeekerCrawler(
+        {"from_clause", "with_compound_statement"}, allow_recurse=False
+    )
+    _dialects_requiring_alias_for_values_clause = [
+        "snowflake",
+    ]
     is_fix_compatible = False
 
     @classmethod
@@ -64,6 +79,12 @@ class Rule_SD01(BaseRule):
     def _eval(self, context: RuleContext) -> EvalResultType:
         flag_review_next = False
         result: List[LintResult] = []
+        aliases: List[str] = []
+        if context.segment.is_type("with_compound_statement"):
+            query = SD01Query.from_segment(context.segment, dialect=context.dialect)
+            for child in query.children:
+                aliases.append(child.cte_name_segment.raw.lower())
+
         if not context.templated_file:
             return result
 
@@ -77,9 +98,11 @@ class Rule_SD01(BaseRule):
             elif re.search(r"\s+from\s+", raw_slice.raw.lower()) or re.search(
                 r"\s+join\s+", raw_slice.raw.lower()
             ):
-                # Exception where use sql function extract
+                # Exception when use sql function extract
                 # If the 'from' is followed by a hardcoded table or view
-                if not re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()):
+                if not re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()) and not (
+                    aliases and any(alias in raw_slice.raw.lower() for alias in aliases)
+                ):
                     raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
                     result.append(
                         LintResult(
