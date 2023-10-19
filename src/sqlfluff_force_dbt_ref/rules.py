@@ -4,10 +4,17 @@
 from dataclasses import dataclass
 
 import re
+import sqlfluff
+from packaging import version
 from sqlfluff.core.parser.segments import BaseSegment
 from sqlfluff.core.rules import BaseRule, EvalResultType, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
-from sqlfluff.utils.analysis.query import Query
+
+if version.parse(sqlfluff.__version__) >= version.parse("2.3.1"):
+    from sqlfluff.utils.analysis.query import Query
+elif version.parse(sqlfluff.__version__) >= version.parse("2.0.0"):
+    from sqlfluff.utils.analysis.select_crawler import Query
+
 from typing import List
 
 
