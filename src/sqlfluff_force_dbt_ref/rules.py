@@ -99,8 +99,8 @@ class Rule_SD01(BaseRule):
         else:
             return cast(BracketedSegment, bracketed_segments.get())
 
-    def _eval_from_clause(
-        self, context: RuleContext, query: SD01Query, from_clause, result: List[LintResult] = []
+    def _eval_from_in_selects(
+        self, context: RuleContext, query: SD01Query, from_clause, result: List[LintResult]
     ) -> EvalResultType:
         table_expressions = (
             from_clause.children(sp.is_type("from_expression"))
@@ -132,6 +132,12 @@ class Rule_SD01(BaseRule):
                     .children(sp.is_type("from_clause"))
                 )
                 self._eval_from_clause(context, query, from_clause_bracketed, result)
+        return result
+
+    def _eval_from_clause(
+        self, context: RuleContext, query: SD01Query, from_clause, result: List[LintResult] = []
+    ) -> EvalResultType:
+        self._eval_from_in_selects(context, query, from_clause, result)
         join = (
             from_clause.children(sp.is_type("from_expression"))
             .children(sp.is_type("join_clause"))
