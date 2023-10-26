@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 from sqlfluff.core.parser.segments import BaseSegment
 from sqlfluff.core.rules import BaseRule, EvalResultType, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
+from sqlfluff.dialects.dialect_ansi import BracketedSegment, IdentifierSegment
 from sqlfluff.utils.analysis.query import Query
-from sqlfluff.utils.functional import FunctionalContext, sp
-from typing import List
+from sqlfluff.utils.functional import FunctionalContext, Segments, sp
+from typing import List, cast
 
 
 @dataclass
@@ -80,39 +81,57 @@ class Rule_SD01(BaseRule):
         for child in query.children:
             query.aliases.append(child.cte_name_segment.raw.lower())
 
-    def _eval_select(
+    def _get_identifier(self, table_expression):
+        identifier_segments = (
+            Segments(table_expression)
+            .children(sp.is_type("table_reference"))
+            .children(sp.is_type("identifier"))
+        )
+        if bool(identifier_segments) and identifier_segments.get().is_type("identifier"):
+            return identifier_segments
+        else:
+            return cast(IdentifierSegment, identifier_segments.get())
+
+    def _get_bracketed(self, table_expression):
+        bracketed_segments = Segments(table_expression).children(sp.is_type("bracketed"))
+        if bool(bracketed_segments) and bracketed_segments.get().is_type("bracketed"):
+            return bracketed_segments
+        else:
+            return cast(BracketedSegment, bracketed_segments.get())
+
+    def _eval_from_clause(
         self, context: RuleContext, query: SD01Query, from_clause, result: List[LintResult] = []
     ) -> EvalResultType:
-        table_expression = (
+        table_expressions = (
             from_clause.children(sp.is_type("from_expression"))
             .children(sp.is_type("from_expression_element"))
             .children(sp.is_type("table_expression"))
         )
-        identifier = table_expression.children(sp.is_type("table_reference")).children(
-            sp.is_type("identifier")
-        )
-        bracketed = table_expression.children(sp.is_type("bracketed"))
-        if (
-            bool(identifier)
-            and not identifier.get().is_templated
-            and identifier.get().raw not in query.aliases
-        ):
-            idx = identifier.raw_segments[0].get_start_point_marker().source_slice.start
-            raw_seg = self._find_raw_at_src_idx(context.segment, idx)
-            result.append(
-                LintResult(
-                    anchor=raw_seg,
-                    description=f"Hard code table or view " f"`{raw_seg.raw}` not allowed.",
+        # Iterate over the for tables
+        for table_expression in table_expressions:
+            identifier = self._get_identifier(table_expression)
+            bracketed = self._get_bracketed(table_expression)
+            if (
+                bool(identifier)
+                and not identifier.get().is_templated
+                and identifier.get().raw not in query.aliases
+            ):
+                idx = identifier.raw_segments[0].get_start_point_marker().source_slice.start
+                raw_seg = self._find_raw_at_src_idx(context.segment, idx)
+                result.append(
+                    LintResult(
+                        anchor=raw_seg,
+                        description=f"Hard code table or view " f"`{raw_seg.raw}` not allowed.",
+                    )
                 )
-            )
-        # Recursive iteration over anidated queries
-        elif bool(bracketed):
-            from_clause_bracketed = (
-                bracketed.select()
-                .children(sp.is_type("select_statement"))
-                .children(sp.is_type("from_clause"))
-            )
-            self._eval_select(context, query, from_clause_bracketed, result)
+            # Recursive iteration over anidated queries
+            elif bool(bracketed):
+                from_clause_bracketed = (
+                    bracketed.select()
+                    .children(sp.is_type("select_statement"))
+                    .children(sp.is_type("from_clause"))
+                )
+                self._eval_from_clause(context, query, from_clause_bracketed, result)
         join = (
             from_clause.children(sp.is_type("from_expression"))
             .children(sp.is_type("join_clause"))
@@ -142,5 +161,5 @@ class Rule_SD01(BaseRule):
         elif context.segment.is_type("select_statement"):
             children = FunctionalContext(context).segment.children()
             from_clause = children.select(sp.is_type("from_clause")).first()
-        self._eval_select(context, query, from_clause, result)
+        self._eval_from_clause(context, query, from_clause, result)
         return result

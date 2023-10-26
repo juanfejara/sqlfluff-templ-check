@@ -8,6 +8,20 @@ forbidden_hardcoded_table:
     from tbl
     order by bar
 
+forbidden_from_multiples_reference:
+  fail_str: |
+    select
+      a.a,
+      sum(b.b)
+    from {{ ref('tbl') }} as a, tbl2 as b
+
+regular_from_multiples_reference:
+  pass_str: |
+    select
+      a.a,
+      sum(b.b)
+    from {{ ref('tbl') }} as a, {{ ref('tbl2') }} as b
+
 regular_from_reference:
   pass_str: |
     select
@@ -76,6 +90,15 @@ regular_from_a_select_with_invalid_reference:
       a,
       sum(b)
     from (select * from tbl)
+    group by a
+    order by a
+
+forbidden_from_multiple_select_with_invalid_reference:
+  fail_str: |
+    select
+      a.a,
+      sum(b.b)
+    from (select * from {{ ref('tbl') }}) as a, (select * from tbl2)
     group by a
     order by a
 
