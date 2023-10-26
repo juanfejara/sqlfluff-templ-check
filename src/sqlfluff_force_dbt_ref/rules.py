@@ -1,20 +1,13 @@
 """Rule that requires dbt ref/source macro in sql FROM.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-import re
-import sqlfluff
-from packaging import version
 from sqlfluff.core.parser.segments import BaseSegment
 from sqlfluff.core.rules import BaseRule, EvalResultType, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
-
-if version.parse(sqlfluff.__version__) >= version.parse("2.3.1"):
-    from sqlfluff.utils.analysis.query import Query
-elif version.parse(sqlfluff.__version__) >= version.parse("2.0.0"):
-    from sqlfluff.utils.analysis.select_crawler import Query
-
+from sqlfluff.utils.analysis.query import Query
+from sqlfluff.utils.functional import FunctionalContext, sp
 from typing import List
 
 
@@ -22,7 +15,7 @@ from typing import List
 class SD01Query(Query):
     """Query subclass with custom SD01 info."""
 
-    pass
+    aliases: List[str] = field(default_factory=list)
 
 
 class Rule_SD01(BaseRule):
@@ -53,7 +46,7 @@ class Rule_SD01(BaseRule):
 
     groups = ("all",)
     crawl_behaviour = SegmentSeekerCrawler(
-        {"from_clause", "with_compound_statement"}, allow_recurse=False
+        {"select_statement", "with_compound_statement"}, allow_recurse=False
     )
     _dialects_requiring_alias_for_values_clause = [
         "snowflake",
@@ -83,64 +76,71 @@ class Rule_SD01(BaseRule):
             # Otherwise recurse
             return cls._find_raw_at_src_idx(seg, src_idx)
 
+    def _fill_aliases(self, context: RuleContext, query: SD01Query):
+        for child in query.children:
+            query.aliases.append(child.cte_name_segment.raw.lower())
+
+    def _eval_select(
+        self, context: RuleContext, query: SD01Query, from_clause, result: List[LintResult] = []
+    ) -> EvalResultType:
+        table_expression = (
+            from_clause.children(sp.is_type("from_expression"))
+            .children(sp.is_type("from_expression_element"))
+            .children(sp.is_type("table_expression"))
+        )
+        identifier = table_expression.children(sp.is_type("table_reference")).children(
+            sp.is_type("identifier")
+        )
+        bracketed = table_expression.children(sp.is_type("bracketed"))
+        if (
+            bool(identifier)
+            and not identifier.get().is_templated
+            and identifier.get().raw not in query.aliases
+        ):
+            idx = identifier.raw_segments[0].get_start_point_marker().source_slice.start
+            raw_seg = self._find_raw_at_src_idx(context.segment, idx)
+            result.append(
+                LintResult(
+                    anchor=raw_seg,
+                    description=f"Hard code table or view " f"`{raw_seg.raw}` not allowed.",
+                )
+            )
+        # Recursive iteration over anidated queries
+        elif bool(bracketed):
+            from_clause_bracketed = (
+                bracketed.select()
+                .children(sp.is_type("select_statement"))
+                .children(sp.is_type("from_clause"))
+            )
+            self._eval_select(context, query, from_clause_bracketed, result)
+        join = (
+            from_clause.children(sp.is_type("from_expression"))
+            .children(sp.is_type("join_clause"))
+            .children(sp.is_type("from_expression_element"))
+            .children(sp.is_type("table_expression"))
+            .children(sp.is_type("table_reference"))
+            .children(sp.is_type("identifier"))
+        )
+        if bool(join) and not join.get().is_templated and join.get().raw not in query.aliases:
+            idx = join.raw_segments[0].get_start_point_marker().source_slice.start
+            raw_seg = self._find_raw_at_src_idx(context.segment, idx)
+            result.append(
+                LintResult(
+                    anchor=raw_seg,
+                    description=f"Hard code join " f"`{raw_seg.raw}` not allowed.",
+                )
+            )
+        return result
+
     def _eval(self, context: RuleContext) -> EvalResultType:
-        flag_review_next = False
         result: List[LintResult] = []
-        aliases: List[str] = []
+        query = SD01Query.from_segment(context.segment, dialect=context.dialect)
         if context.segment.is_type("with_compound_statement"):
-            query = SD01Query.from_segment(context.segment, dialect=context.dialect)
-            for child in query.children:
-                aliases.append(child.cte_name_segment.raw.lower())
-
-        if not context.templated_file:
-            return result
-
-        for raw_slice in context.templated_file.raw_sliced:
-            # In case of the slice finish with from or join, must search in the next slice
-            if re.search(r"from\s*$", raw_slice.raw.lower()) or re.search(
-                r"join\s*$", raw_slice.raw.lower()
-            ):
-                flag_review_next = True
-            # In case of the slice have from ro join but don't finish whith them
-            elif re.search(r"\s+from\s+", raw_slice.raw.lower()) or re.search(
-                r"\s+join\s+", raw_slice.raw.lower()
-            ):
-                # Exception when use sql function extract
-                # If the 'from' is followed by a hardcoded table or view
-                if not re.search(r"\s+extract\(\s*.+\s+from\s+", raw_slice.raw.lower()) and not (
-                    aliases and any(alias in raw_slice.raw.lower() for alias in aliases)
-                ):
-                    raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
-                    result.append(
-                        LintResult(
-                            anchor=raw_seg,
-                            description=f"Hard code table or view "
-                            f"`{raw_slice.raw.lower()}` not allowed.",
-                        )
-                    )
-            elif flag_review_next:
-                # In case of begin with a new query, it begins with "( select"
-                if re.search(r"^\s*\(\s*select", raw_slice.raw.lower()):
-                    if not (
-                        re.search(r"from\s*$", raw_slice.raw.lower())
-                        or re.search(r"join\s*$", raw_slice.raw.lower())
-                    ):
-                        flag_review_next = False
-                # In case of a template must have a ref or a source
-                elif not (
-                    re.search(r"^{{\sref\('.+'\)\s}}$", raw_slice.raw.lower())
-                    or re.search(
-                        r"^{{\s*source\(\s*'.+'\s*,\s*'.+'\s*\)\s*}}$", raw_slice.raw.lower()
-                    )
-                ):
-                    raw_seg = self._find_raw_at_src_idx(context.segment, raw_slice.source_idx)
-                    result.append(
-                        LintResult(
-                            anchor=raw_seg,
-                            description=f"Must use ref or source in tamplate, "
-                            f"`{raw_slice.raw}` not allowed.",
-                        )
-                    )
-                else:
-                    flag_review_next = False
+            self._fill_aliases(context, query)
+            children = FunctionalContext(context).segment.children(sp.is_type("select_statement"))
+            from_clause = children.children(sp.is_type("from_clause")).first()
+        elif context.segment.is_type("select_statement"):
+            children = FunctionalContext(context).segment.children()
+            from_clause = children.select(sp.is_type("from_clause")).first()
+        self._eval_select(context, query, from_clause, result)
         return result

@@ -1,13 +1,12 @@
 rule: SD01
 
-regular_join_reference:
-  pass_str: |
+forbidden_hardcoded_table:
+  fail_str: |
     select
-      a,
-      b,
-      c
-    from {{ ref('tbl') }}
-    inner join {{ ref('tbl2') }}
+      bar,
+      baz
+    from tbl
+    order by bar
 
 regular_from_reference:
   pass_str: |
@@ -17,6 +16,33 @@ regular_from_reference:
     from {{ ref('tbl') }}
     group by a
     order by a
+
+regular_join_reference:
+  pass_str: |
+    select
+      a,
+      b,
+      c
+    from {{ ref('tbl') }}
+    inner join {{ ref('tbl2') }}
+
+forbidden_regular_from_plus_join_reference:
+  fail_str: |
+    select
+      a,
+      b,
+      c
+    from tbl
+    inner join {{ ref('tbl2') }}
+
+forbidden_regular_join_reference:
+  fail_str: |
+    select
+      a,
+      b,
+      c
+    from {{ ref('tbl') }}
+    inner join tbl2
 
 regular_join_reference_with_source_in_from:
   pass_str: |
@@ -44,6 +70,15 @@ regular_from_a_select_with_reference:
     group by a
     order by a
 
+regular_from_a_select_with_invalid_reference:
+  fail_str: |
+    select
+      a,
+      sum(b)
+    from (select * from tbl)
+    group by a
+    order by a
+
 regular_extract_exception:
   pass_str: |
     select
@@ -52,16 +87,6 @@ regular_extract_exception:
       c
     from {{ ref('tbl') }}
     inner join {{ ref('tbl2') }}
-
-
-forbidden_hardcoded_table:
-  fail_str: |
-    select
-      bar,
-      baz
-    from tbl
-    order by bar
-
 
 allowed_alias_reference:
   pass_str: |
