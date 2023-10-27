@@ -18,9 +18,9 @@ forbidden_from_multiples_reference:
 regular_from_multiples_reference:
   pass_str: |
     select
-      a.a,
-      sum(b.b)
-    from {{ ref('tbl') }} as a, {{ ref('tbl2') }} as b
+      t1.a,
+      sum(t2.b)
+    from {{ ref('tbl') }} as t1, {{ ref('tbl2') }} as t2
 
 regular_from_reference:
   pass_str: |
@@ -71,11 +71,11 @@ regular_forbidden_multiple_join_reference:
 forbidden_regular_join_reference:
   fail_str: |
     select
-      a,
-      b,
-      c
-    from {{ ref('tbl') }}
-    inner join tbl2
+      t1.a,
+      t1.b,
+      t1.c
+    from {{ ref('tbl') }} t1
+    inner join tbl2 as t2 on t2.a = t1.a
 
 regular_join_reference_with_source_in_from:
   pass_str: |
@@ -88,11 +88,11 @@ regular_join_reference_with_source_in_from:
 regular_join_reference_with_source_instead:
   pass_str: |
     select
-      a,
-      b,
-      c
-    from {{ ref('tbl') }}
-    inner join {{ source('compatibility', 'tbl2') }}
+      t1.a,
+      t1.b,
+      t1.c
+    from {{ ref('tbl') }} as t1
+    inner join {{ source('compatibility', 'tbl2') }} as t2 on t2.a = t1.a
 
 regular_from_a_select_with_reference:
   pass_str: |
@@ -115,9 +115,9 @@ regular_from_a_select_with_invalid_reference:
 forbidden_from_multiple_select_with_invalid_reference:
   fail_str: |
     select
-      a.a,
-      sum(b.b)
-    from (select * from {{ ref('tbl') }}) as a, (select * from tbl2)
+      tb1.a,
+      sum(tb2.b)
+    from (select * from {{ ref('tbl') }}) as tb1, (select * from tbl2) as tb2
     group by a
     order by a
 
