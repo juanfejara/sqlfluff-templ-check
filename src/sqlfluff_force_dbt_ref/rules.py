@@ -145,14 +145,16 @@ class Rule_SD01(BaseRule):
         """Evaluate the tables, views or nested queries inside a join clause if exists
         not allowed references"""
         # Extract joins in the select
-        joins = (
+        join_table_expression = (
             from_clause.children(sp.is_type("from_expression"))
             .children(sp.is_type("join_clause"))
             .children(sp.is_type("from_expression_element"))
             .children(sp.is_type("table_expression"))
-            .children(sp.is_type("table_reference"))
-            .children(sp.is_type("identifier"))
         )
+        joins = join_table_expression.children(sp.is_type("table_reference")).children(
+            sp.is_type("identifier")
+        )
+        bracketed = join_table_expression.children(sp.is_type("bracketed"))
         # Iterate over the join clauses
         for join in joins:
             if bool(join) and not join.is_templated and join.raw not in query.aliases:
@@ -164,6 +166,14 @@ class Rule_SD01(BaseRule):
                         description=f"Hard code join " f"`{raw_seg.raw}` not allowed.",
                     )
                 )
+        # In case nested query inside join eval recursively
+        if bool(bracketed):
+            from_clause_bracketed = (
+                bracketed.select()
+                .children(sp.is_type("select_statement"))
+                .children(sp.is_type("from_clause"))
+            )
+            self._eval_clauses(context, query, from_clause_bracketed, result)
         return result
 
     def _eval_clauses(

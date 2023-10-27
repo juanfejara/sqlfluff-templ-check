@@ -94,6 +94,17 @@ regular_join_reference_with_source_instead:
     from {{ ref('tbl') }} as t1
     inner join {{ source('compatibility', 'tbl2') }} as t2 on t2.a = t1.a
 
+forbidden_invalid_reference_in_nested_query_on_join:
+  fail_str: |
+    select
+      tb1.a,
+      sum(tb2.b)
+    from {{ ref('tbl1') }} as tb1
+    inner join (select * from tbl2) as t2 on t2.a = t1.a
+    group by a
+    order by a
+
+
 regular_from_a_select_with_reference:
   pass_str: |
     select
