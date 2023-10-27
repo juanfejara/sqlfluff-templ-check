@@ -159,3 +159,22 @@ allowed_alias_reference:
       bar,
       baz
     from allow_alias
+
+not_allowed_reference_in_alias:
+  fail_str: |
+    with allow_alias as (
+      select
+        bar,
+        baz
+      from tbl1
+    )
+    , another_alias as (
+      select
+        bar,
+        baz
+      from {{ ref('tbl2') }}
+    )
+    select
+      bar,
+      baz
+    from allow_alias
