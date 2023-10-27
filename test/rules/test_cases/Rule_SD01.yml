@@ -34,20 +34,39 @@ regular_from_reference:
 regular_join_reference:
   pass_str: |
     select
-      a,
-      b,
-      c
-    from {{ ref('tbl') }}
-    inner join {{ ref('tbl2') }}
+      t1.a,
+      t1.b,
+      t1.c
+    from {{ ref('tbl') }} as t1
+    inner join {{ ref('tbl2') }} as t2 on t2.a = t1.a
 
 forbidden_regular_from_plus_join_reference:
   fail_str: |
     select
-      a,
-      b,
-      c
-    from tbl
-    inner join {{ ref('tbl2') }}
+      t1.a,
+      t1.b,
+      t1.c
+    from tbl as t1
+    inner join tbl2 as t2 on t2.a = t1.a
+
+regular_from_plus_forbidden join_reference:
+  fail_str: |
+    select
+      t1.a,
+      t1.b,
+      t1.c
+    from {{ ref('tbl') }} as t1
+    inner join tbl2 as t2 on t2.a = t1.a
+
+regular_forbidden_multiple_join_reference:
+  fail_str: |
+    select
+      t1.a,
+      t1.b,
+      t1.c
+    from {{ ref('tbl') }} as t1
+    inner join {{ ref('tbl2') }} as t2 on t2.a = t1.a
+    inner join tbl3 as t3 on t3.b = t1.b
 
 forbidden_regular_join_reference:
   fail_str: |
