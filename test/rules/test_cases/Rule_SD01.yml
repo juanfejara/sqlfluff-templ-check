@@ -49,7 +49,7 @@ forbidden_regular_from_plus_join_reference:
     from tbl as t1
     inner join tbl2 as t2 on t2.a = t1.a
 
-regular_from_plus_forbidden join_reference:
+regular_from_plus_forbidden_join_reference:
   fail_str: |
     select
       t1.a,
