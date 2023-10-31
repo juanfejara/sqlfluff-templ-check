@@ -14,6 +14,7 @@ forbidden_from_multiples_reference:
       a.a,
       sum(b.b)
     from {{ ref('tbl') }} as a, tbl2 as b
+    where a.a = b.a
 
 regular_from_multiples_reference:
   pass_str: |
@@ -21,6 +22,7 @@ regular_from_multiples_reference:
       t1.a,
       sum(t2.b)
     from {{ ref('tbl') }} as t1, {{ ref('tbl2') }} as t2
+    where t1.a = t2.a
 
 regular_from_reference:
   pass_str: |
@@ -77,13 +79,13 @@ forbidden_regular_join_reference:
     from {{ ref('tbl') }} t1
     inner join tbl2 as t2 on t2.a = t1.a
 
-regular_join_reference_with_source_in_from:
+regular_reference_with_source_in_from:
   pass_str: |
     select
       a,
       b,
       c
-    from {{ source('compatibility', 'tbl2') }}
+    from {{ source('compatibility', 'tbl') }}
 
 regular_join_reference_with_source_instead:
   pass_str: |
@@ -141,7 +143,7 @@ regular_extract_exception:
     from {{ ref('tbl') }}
     inner join {{ ref('tbl2') }}
 
-allowed_alias_reference:
+allowed_alias_reference_in_cte:
   pass_str: |
     with allow_alias as (
       select
@@ -160,7 +162,7 @@ allowed_alias_reference:
       baz
     from allow_alias
 
-not_allowed_reference_in_alias:
+not_allowed_reference_in_alias_in_cte:
   fail_str: |
     with allow_alias as (
       select
@@ -178,3 +180,53 @@ not_allowed_reference_in_alias:
       bar,
       baz
     from allow_alias
+
+not_allowed_reference_with_cte_in_from_clause:
+  fail_str: |
+    select
+      bar,
+      bax
+    from (
+      with not_allowed_cte as (
+        select
+          bar,
+          baz
+        from tbl1
+      )
+      , another_cte as (
+        select
+          bar,
+          baz
+        from {{ ref('tbl2') }}
+      )
+      select
+        bar,
+        baz
+      from not_allowed_cte
+      inner join another_cte on another_cte.bar = not_allowed_cte.bar
+    )
+
+allowed_reference_with_cte_in_from_clause:
+  pass_str: |
+    select
+      bar,
+      bax
+    from (
+      with allow_cte as (
+        select
+          bar,
+          baz
+        from {{ source('compatibility', 'tbl1') }}
+      )
+      , another_cte as (
+        select
+          bar,
+          baz
+        from {{ ref('tbl2') }}
+      )
+      select
+        bar,
+        baz
+      from allow_cte
+      inner join another_cte on another_cte.bar = allow_cte.bar
+    )
