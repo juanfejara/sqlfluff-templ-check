@@ -51,21 +51,11 @@ class Rule_SD01(BaseRule):
         references."""
         result: List[LintResult] = []
         if context.segment.is_type("with_compound_statement"):
-            # Iterate over with clouses and evaluate them
-            for cte in (
-                FunctionalContext(context)
-                .segment.children(sp.is_type("common_table_expression"))
-                .iterate_segments()
-            ):
-                self.with_aliases.append(cte.children(sp.is_type("identifier"))[0].raw.lower())
-                bracketed = cte.children(sp.is_type("bracketed"))
-                from_clause = self._get_bracketeds_from_clause(bracketed)
-                self._eval_clauses(context, from_clause, result)
-            children = FunctionalContext(context).segment.children(sp.is_type("select_statement"))
+            from_clause = FunctionalContext(context).segment
         # In case of segment of type select_statement
         else:
             children = FunctionalContext(context).segment.children()
-        from_clause = children.select(sp.is_type("from_clause")).first()
+            from_clause = children.select(sp.is_type("from_clause")).first()
         self._eval_clauses(context, from_clause, result)
         return result
 
@@ -73,8 +63,23 @@ class Rule_SD01(BaseRule):
         self, context: RuleContext, from_clause, result: List[LintResult] = []
     ) -> EvalResultType:
         """Recursively evaluation to find not allowed tables or views reference."""
+        self._eval_cte_clause(context, from_clause, result)
         self._eval_from_clause(context, from_clause, result)
         self._eval_join_clauses(context, from_clause, result)
+        return result
+
+    def _eval_cte_clause(
+        self, context: RuleContext, from_clause, result: List[LintResult] = []
+    ) -> EvalResultType:
+        for cte in from_clause.children(sp.is_type("common_table_expression")).iterate_segments():
+            self.with_aliases.append(cte.children(sp.is_type("identifier"))[0].raw.lower())
+            bracketed = cte.children(sp.is_type("bracketed"))
+            from_clause_bracketed = self._get_bracketeds_from_clause(bracketed)
+            self._eval_clauses(context, from_clause_bracketed, result)
+        if bool(from_clause.children(sp.is_type("select_statement"))):
+            self._eval_clauses(
+                context, from_clause.children(sp.is_type("select_statement")), result
+            )
         return result
 
     def _eval_join_clauses(
@@ -144,7 +149,11 @@ class Rule_SD01(BaseRule):
                     .children(sp.is_type("select_statement"))
                     .children(sp.is_type("from_clause"))
                 )
-                self._eval_clauses(context, from_clause_bracketed, result)
+                from_clause_cte = bracketed.children(sp.is_type("with_compound_statement"))
+                if bool(from_clause_bracketed):
+                    self._eval_clauses(context, from_clause_bracketed, result)
+                elif bool(from_clause_cte):
+                    self._eval_clauses(context, from_clause_cte, result)
         return result
 
     @classmethod
