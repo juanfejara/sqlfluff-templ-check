@@ -230,3 +230,75 @@ allowed_reference_with_cte_in_from_clause:
       from allow_cte
       inner join another_cte on another_cte.bar = allow_cte.bar
     )
+
+not_allowed_nested_cte_0:
+  fail_str:
+    with unit_counts AS (
+      with cities_internal AS (
+          select id,
+              name
+          from prod_repl.flatbook.cities
+      )
+      select name
+          , count(distinct units.id)
+      from cities_internal
+      left join prod_repl.flatbook.units
+          on units.city_id = cities_internal.id
+      group by name
+    )
+    select *
+    from cities_internal
+
+not_allowed_nested_cte_1:
+  fail_str:
+    with unit_counts AS (
+      with cities_internal AS (
+          select id,
+              name
+          from prod_repl.flatbook.cities
+      )
+      select name
+          , count(distinct units.id)
+      from cities_internal
+      left join {{ source('prod', 'units') }}
+          on units.city_id = cities_internal.id
+      group by name
+    )
+    select *
+    from cities_internal
+
+not_allowed_nested_cte_2:
+  fail_str:
+    with unit_counts AS (
+      with cities_internal AS (
+          select id,
+              name
+          from {{ source('prod', 'cities') }}
+      )
+      select name
+          , count(distinct units.id)
+      from cities_internal
+      left join prod_repl.flatbook.units
+          on units.city_id = cities_internal.id
+      group by name
+    )
+    select *
+    from cities_internal
+
+not_allowed_nested_cte_3:
+  pass_str:
+    with unit_counts AS (
+      with cities_internal AS (
+          select id,
+              name
+          from {{ source('prod', 'cities') }}
+      )
+      select name
+          , count(distinct units.id)
+      from cities_internal
+      left join {{ ref('units') }}
+          on units.city_id = cities_internal.id
+      group by name
+    )
+    select *
+    from cities_internal
