@@ -4,7 +4,11 @@
 from sqlfluff.core.parser.segments import BaseSegment
 from sqlfluff.core.rules import BaseRule, EvalResultType, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
-from sqlfluff.dialects.dialect_ansi import BracketedSegment, IdentifierSegment
+from sqlfluff.dialects.dialect_ansi import (
+    BracketedSegment,
+    IdentifierSegment,
+    TableReferenceSegment,
+)
 from sqlfluff.utils.functional import FunctionalContext, Segments
 from sqlfluff.utils.functional import segment_predicates as sp
 from typing import List, cast
@@ -51,51 +55,63 @@ class Rule_SD01(BaseRule):
         references."""
         result: List[LintResult] = []
         if context.segment.is_type("with_compound_statement"):
-            # Iterate over with clouses and evaluate them
-            for cte in (
-                FunctionalContext(context)
-                .segment.children(sp.is_type("common_table_expression"))
-                .iterate_segments()
-            ):
-                self.with_aliases.append(cte.children(sp.is_type("identifier"))[0].raw.lower())
-                bracketed = cte.children(sp.is_type("bracketed"))
-                from_clause = self._get_bracketeds_from_clause(bracketed)
-                self._eval_clauses(context, from_clause, result)
-            children = FunctionalContext(context).segment.children(sp.is_type("select_statement"))
+            from_clause = FunctionalContext(context).segment
         # In case of segment of type select_statement
         else:
             children = FunctionalContext(context).segment.children()
-        from_clause = children.select(sp.is_type("from_clause")).first()
+            from_clause = children.select(sp.is_type("from_clause")).first()
         self._eval_clauses(context, from_clause, result)
         return result
 
     def _eval_clauses(
-        self, context: RuleContext, from_clause, result: List[LintResult] = []
+        self, context: RuleContext, clause, result: List[LintResult] = []
     ) -> EvalResultType:
         """Recursively evaluation to find not allowed tables or views reference."""
-        self._eval_from_clause(context, from_clause, result)
-        self._eval_join_clauses(context, from_clause, result)
+        self._eval_cte_clause(context, clause, result)
+        if clause.get().is_type("with_compound_statement"):
+            clause = clause.children(sp.is_type("select_statement")).children(
+                sp.is_type("from_clause")
+            )
+        self._eval_from_clause(context, clause, result)
+        self._eval_join_clauses(context, clause, result)
+        return result
+
+    def _eval_cte_clause(
+        self, context: RuleContext, from_clause, result: List[LintResult] = []
+    ) -> EvalResultType:
+        for cte in from_clause.children(sp.is_type("common_table_expression")).iterate_segments():
+            self.with_aliases.append(cte.children(sp.is_type("identifier"))[0].raw.lower())
+            bracketed = cte.children(sp.is_type("bracketed"))
+            from_clause_bracketed = self._get_clause_in_bracketed(bracketed)
+            self._eval_clauses(context, from_clause_bracketed, result)
         return result
 
     def _eval_join_clauses(
-        self, context: RuleContext, from_clause, result: List[LintResult] = []
+        self, context: RuleContext, clause, result: List[LintResult] = []
     ) -> EvalResultType:
         """Evaluate the tables, views or nested queries inside a join clause if exists
         not allowed references"""
-        # Extract joins in the select
-        join_table_expression = (
-            from_clause.children(sp.is_type("from_expression"))
-            .children(sp.is_type("join_clause"))
-            .children(sp.is_type("from_expression_element"))
-            .children(sp.is_type("table_expression"))
-        )
-        joins = join_table_expression.children(sp.is_type("table_reference")).children(
-            sp.is_type("identifier")
-        )
-        bracketed = join_table_expression.children(sp.is_type("bracketed"))
-        # Iterate over the join clauses
+        joins = clause.children(sp.is_type("from_expression")).children(sp.is_type("join_clause"))
+        # Loop over joins clauses
         for join in joins:
-            if bool(join) and not join.is_templated and join.raw not in self.with_aliases:
+            join_table_expression = (
+                Segments(join)
+                .children(sp.is_type("from_expression_element"))
+                .children(sp.is_type("table_expression"))
+            )
+            bracketed = join_table_expression.children(sp.is_type("bracketed"))
+            table_reference = cast(
+                TableReferenceSegment,
+                join_table_expression.children(sp.is_type("table_reference")).get(),
+            )
+            alias = table_reference.raw if bool(table_reference) else ""
+            # In case join like: left join (select id from tbl) as tb on tb.id = othertb.id
+            # Iterate over the select
+            if bool(bracketed):
+                from_clause_bracketed = self._get_clause_in_bracketed(bracketed)
+                self._eval_clauses(context, from_clause_bracketed, result)
+            # Else there not need iteration like in : left join tbl as tb on tb.id = othertb.id
+            elif bool(join) and not join.is_templated and alias not in self.with_aliases:
                 idx = join.raw_segments[0].get_start_point_marker().source_slice.start
                 raw_seg = self._find_raw_at_src_idx(context.segment, idx)
                 result.append(
@@ -105,22 +121,19 @@ class Rule_SD01(BaseRule):
                     )
                 )
         # In case nested query inside join eval recursively
-        if bool(bracketed):
-            from_clause_bracketed = self._get_bracketeds_from_clause(bracketed)
-            self._eval_clauses(context, from_clause_bracketed, result)
         return result
 
     def _eval_from_clause(
-        self, context: RuleContext, from_clause, result: List[LintResult]
+        self, context: RuleContext, clause, result: List[LintResult]
     ) -> EvalResultType:
         """Evaluate the tables, views or nested queries inside a from clause if exists
         not allowed references"""
         table_expressions = (
-            from_clause.children(sp.is_type("from_expression"))
+            clause.children(sp.is_type("from_expression"))
             .children(sp.is_type("from_expression_element"))
             .children(sp.is_type("table_expression"))
         )
-        # Iterate over the for tables
+        # Loop over for tables
         for table_expression in table_expressions:
             identifier = self._get_identifier(table_expression)
             bracketed = self._get_bracketed(table_expression)
@@ -139,12 +152,12 @@ class Rule_SD01(BaseRule):
                 )
             # Recursive iteration over nested queries
             elif bool(bracketed):
-                from_clause_bracketed = (
-                    bracketed.select()
-                    .children(sp.is_type("select_statement"))
-                    .children(sp.is_type("from_clause"))
+                clause = bracketed.children(
+                    sp.is_type("with_compound_statement")
+                ) or bracketed.select().children(sp.is_type("select_statement")).children(
+                    sp.is_type("from_clause")
                 )
-                self._eval_clauses(context, from_clause_bracketed, result)
+                self._eval_clauses(context, clause, result)
         return result
 
     @classmethod
@@ -170,12 +183,15 @@ class Rule_SD01(BaseRule):
             # Otherwise recurse
             return cls._find_raw_at_src_idx(seg, src_idx)
 
-    def _get_bracketeds_from_clause(self, bracketed):
-        return (
-            bracketed.children(sp.is_type("select_statement"))
-            .children(sp.is_type("from_clause"))
-            .first()
-        )
+    def _get_clause_in_bracketed(self, bracketed):
+        if bracketed.children(sp.is_type("select_statement")):
+            return (
+                bracketed.children(sp.is_type("select_statement"))
+                .children(sp.is_type("from_clause"))
+                .first()
+            )
+        else:
+            return bracketed.children(sp.is_type("with_compound_statement"))
 
     def _get_bracketed(self, table_expression):
         """Get the query nested inside brackets on a table expression"""
