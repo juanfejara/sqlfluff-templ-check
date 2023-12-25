@@ -8,6 +8,36 @@ forbidden_hardcoded_table:
     from tbl
     order by bar
 
+allowed_union_in_with:
+  pass_str: |
+    with union_tbl as (
+      select
+        t1.id
+      from {{ ref('tbl1') }} as t1
+      union all
+      select
+        t2.id
+      from {{ ref('tbl2') }} as t2
+    )
+    select
+      t.id
+    from union_tbl as t
+
+not_allowed_union_in_with:
+  fail_str: |
+    with union_tbl as (
+      select
+        t1.id
+      from {{ ref('tbl1') }} as t1
+      union all
+      select
+        id
+      from tbl2
+    )
+    select
+      t.id
+    from union_tbl as t
+
 forbidden_from_multiples_reference:
   fail_str: |
     select
@@ -32,6 +62,14 @@ regular_from_reference:
     from {{ ref('tbl') }}
     group by a
     order by a
+
+forbidden_hardcoded_table_in_nested_field:
+  fail_str: |
+    select
+      (select bar from tbl) as bar,
+      baz
+    from {{ ref('tbl2') }}
+    order by bar
 
 regular_join_reference:
   pass_str: |
@@ -105,7 +143,6 @@ forbidden_invalid_reference_in_nested_query_on_join:
     inner join (select * from tbl2) as t2 on t2.a = t1.a
     group by a
     order by a
-
 
 regular_from_a_select_with_reference:
   pass_str: |
@@ -216,7 +253,7 @@ allowed_reference_with_cte_in_from_clause:
         select
           bar,
           baz
-        from {{ source('compatibility', 'tbl1') }}
+        from {{ source('dom1', 'tbl1') }}
       )
       , another_cte as (
         select
@@ -233,72 +270,76 @@ allowed_reference_with_cte_in_from_clause:
 
 not_allowed_nested_cte_0:
   fail_str:
-    with unit_counts AS (
-      with cities_internal AS (
+    with tbl AS (
+      with ali1 AS (
           select id,
-              name
-          from prod_repl.flatbook.cities
+            bar
+          from tbl1
       )
-      select name
-          , count(distinct units.id)
-      from cities_internal
-      left join prod_repl.flatbook.units
-          on units.city_id = cities_internal.id
-      group by name
+      select bar
+          , count(distinct tbl2.id)
+      from ali1
+      left join tbl2
+          on tbl2.city_id = ali1.id
+      group by bar
     )
     select *
-    from cities_internal
+    from ali1
 
 not_allowed_nested_cte_1:
   fail_str:
-    with unit_counts AS (
-      with cities_internal AS (
+    with tbl AS (
+      with ali1 AS (
           select id,
-              name
-          from prod_repl.flatbook.cities
+            bar
+          from tbl1
       )
-      select name
-          , count(distinct units.id)
-      from cities_internal
-      left join {{ source('prod', 'units') }}
-          on units.city_id = cities_internal.id
-      group by name
+      select bar
+          , count(distinct tbl2.id)
+      from ali1
+      left join {{ source('dom', 'tbl2') }}
+          on tbl2.id = ali1.id
+      group by bar
     )
     select *
-    from cities_internal
+    from ali1
 
 not_allowed_nested_cte_2:
   fail_str:
-    with unit_counts AS (
-      with cities_internal AS (
+    with tbl AS (
+      with tbl2 AS (
           select id,
               name
           from {{ source('prod', 'cities') }}
       )
       select name
-          , count(distinct units.id)
-      from cities_internal
-      left join prod_repl.flatbook.units
-          on units.city_id = cities_internal.id
+          , count(distinct tgl1.id)
+      from tbl2
+      left join tbl1
+          on tgl1.city_id = tbl2.id
       group by name
     )
     select *
-    from cities_internal
+    from tbl2
 
 not_allowed_nested_cte_3:
   pass_str:
-    with unit_counts AS (
-      with cities_internal AS (
+    with tbl AS (
+      with tbl2 AS (
           select id,
               name
           from {{ source('prod', 'cities') }}
       )
       select name
-          , count(distinct units.id)
-      from cities_internal
-      left join {{ ref('units') }}
-          on units.city_id = cities_internal.id
+          , count(distinct tgl1.id)
+      from tbl2
+      left join {{ ref('tgl1') }}
+          on tgl1.city_id = tbl2.id
       group by name
     )
     select *
-    from cities_internal
+    from tbl2
+
+allowed_select_without_from:
+  pass_str:
+    select current_date()

@@ -54,40 +54,68 @@ class Rule_SD01(BaseRule):
         """Evaluate to find not allowed tables or views reference, only allow templated
         references."""
         result: List[LintResult] = []
-        if context.segment.is_type("with_compound_statement"):
-            from_clause = FunctionalContext(context).segment
-        # In case of segment of type select_statement
-        else:
-            children = FunctionalContext(context).segment.children()
-            from_clause = children.select(sp.is_type("from_clause")).first()
-        self._eval_clauses(context, from_clause, result)
+        self._eval_clauses(context, FunctionalContext(context).segment, result)
         return result
 
     def _eval_clauses(
         self, context: RuleContext, clause, result: List[LintResult] = []
     ) -> EvalResultType:
         """Recursively evaluation to find not allowed tables or views reference."""
-        self._eval_cte_clause(context, clause, result)
-        if clause.get().is_type("with_compound_statement"):
-            clause = clause.children(sp.is_type("select_statement")).children(
-                sp.is_type("from_clause")
+        if not hasattr(clause, "get") or not callable(clause.get):
+            clause = Segments(cast(BaseSegment, clause))
+        if clause.get() is None:
+            return result
+        if clause.get().is_type("select_statement"):
+            self._eval_select_statement(context, clause, result)
+        elif clause.get().is_type("with_compound_statement"):
+            cte_clauses = clause.children(sp.is_type("common_table_expression"))
+            self._eval_cte_clause(context, cte_clauses, result)
+            self._eval_select_statement(
+                context, clause.children(sp.is_type("select_statement")), result
             )
-        self._eval_from_clause(context, clause, result)
-        self._eval_join_clauses(context, clause, result)
+        elif clause.get().is_type("set_expression"):
+            self._eval_set_clause(context, clause, result)
+        return result
+
+    def _eval_select_statement(
+        self, context: RuleContext, clause: Segments, result: List[LintResult] = []
+    ) -> EvalResultType:
+        """Evaluate the select statement, and for every nested expression call"""
+        for element in clause.children(sp.is_type("select_clause")).children(
+            sp.is_type("select_clause_element")
+        ):
+            if element.is_expandable:
+                bracketed = element.segments[0]
+                expression = self._get_bracketed(bracketed).children(sp.is_type("expression"))
+                self._eval_clauses(context, Segments(expression.get().segments[0]), result)
+        from_clause = clause.children(sp.is_type("from_clause"))
+        self._eval_from_clause(context, from_clause, result)
+        self._eval_join_clauses(context, from_clause, result)
+        return result
+
+    def _eval_set_clause(
+        self, context: RuleContext, set_clauses: Segments, result: List[LintResult] = []
+    ) -> EvalResultType:
+        """Evalueate set expressions, and for every nested expression call
+        recorsively the evaluation"""
+        for sel in set_clauses.children(sp.is_type("select_statement")):
+            self._eval_clauses(context, sel, result)
         return result
 
     def _eval_cte_clause(
-        self, context: RuleContext, from_clause, result: List[LintResult] = []
+        self, context: RuleContext, cte_clauses: Segments, result: List[LintResult] = []
     ) -> EvalResultType:
-        for cte in from_clause.children(sp.is_type("common_table_expression")).iterate_segments():
+        """Evalueate common table expressions, and for every nested expression call
+        recorsively the evaluation"""
+        for cte in cte_clauses.iterate_segments():
             self.with_aliases.append(cte.children(sp.is_type("identifier"))[0].raw.lower())
             bracketed = cte.children(sp.is_type("bracketed"))
-            from_clause_bracketed = self._get_clause_in_bracketed(bracketed)
-            self._eval_clauses(context, from_clause_bracketed, result)
+            for clause in self._get_clauses_in_bracketed(bracketed):
+                self._eval_clauses(context, clause, result)
         return result
 
     def _eval_join_clauses(
-        self, context: RuleContext, clause, result: List[LintResult] = []
+        self, context: RuleContext, clause: Segments, result: List[LintResult] = []
     ) -> EvalResultType:
         """Evaluate the tables, views or nested queries inside a join clause if exists
         not allowed references"""
@@ -99,32 +127,43 @@ class Rule_SD01(BaseRule):
                 .children(sp.is_type("from_expression_element"))
                 .children(sp.is_type("table_expression"))
             )
-            bracketed = join_table_expression.children(sp.is_type("bracketed"))
-            table_reference = cast(
-                TableReferenceSegment,
-                join_table_expression.children(sp.is_type("table_reference")).get(),
-            )
-            alias = table_reference.raw if bool(table_reference) else ""
-            # In case join like: left join (select id from tbl) as tb on tb.id = othertb.id
-            # Iterate over the select
-            if bool(bracketed):
-                from_clause_bracketed = self._get_clause_in_bracketed(bracketed)
-                self._eval_clauses(context, from_clause_bracketed, result)
-            # Else there not need iteration like in : left join tbl as tb on tb.id = othertb.id
-            elif bool(join) and not join.is_templated and alias not in self.with_aliases:
-                idx = join.raw_segments[0].get_start_point_marker().source_slice.start
-                raw_seg = self._find_raw_at_src_idx(context.segment, idx)
-                result.append(
-                    LintResult(
-                        anchor=raw_seg,
-                        description=f"Hard coded join " f"`{raw_seg.raw}` is not allowed.",
-                    )
+            if join.is_expandable:
+                bracketed = join_table_expression.children(sp.is_type("bracketed"))
+                self._eval_clauses(
+                    context, bracketed.children(sp.is_type("select_statement")), result
                 )
-        # In case nested query inside join eval recursively
+                alias_expression = (
+                    Segments(join)
+                    .children(sp.is_type("from_expression_element"))
+                    .children(sp.is_type("alias_expression"))
+                )
+                if alias_expression:
+                    identfifier = alias_expression.children(sp.is_type("identifier")).get()
+                    if identfifier:
+                        self.with_aliases.append(identfifier.raw.lower())
+            else:
+                table_reference = cast(
+                    TableReferenceSegment,
+                    join_table_expression.children(sp.is_type("table_reference")).get(),
+                )
+                alias_ref = table_reference.raw if bool(table_reference) else ""
+                if bool(join) and not join.is_templated and alias_ref not in self.with_aliases:
+                    idx = join.raw_segments[0].get_start_point_marker().source_slice.start
+                    raw_seg = self._find_raw_at_src_idx(context.segment, idx)
+                    result.append(
+                        LintResult(
+                            anchor=raw_seg,
+                            description=f"Hard coded join " f"`{raw_seg.raw}` is not allowed.",
+                        )
+                    )
         return result
 
+    def _get_statement(self, segment: Segments) -> Segments:
+        """Get the statement inside a bracketed segment or a select statement"""
+        return self._get_clauses_in_bracketed(Segments(cast(BaseSegment, segment)).children())
+
     def _eval_from_clause(
-        self, context: RuleContext, clause, result: List[LintResult]
+        self, context: RuleContext, clause: Segments, result: List[LintResult]
     ) -> EvalResultType:
         """Evaluate the tables, views or nested queries inside a from clause if exists
         not allowed references"""
@@ -135,29 +174,34 @@ class Rule_SD01(BaseRule):
         )
         # Loop over for tables
         for table_expression in table_expressions:
-            identifier = self._get_identifier(table_expression)
-            bracketed = self._get_bracketed(table_expression)
-            if (
-                bool(identifier)
-                and not identifier.get().is_templated
-                and identifier.get().raw not in self.with_aliases
-            ):
-                idx = identifier.raw_segments[0].get_start_point_marker().source_slice.start
-                raw_seg = self._find_raw_at_src_idx(context.segment, idx)
-                result.append(
-                    LintResult(
-                        anchor=raw_seg,
-                        description=f"Hard codes tables/views " f"`{raw_seg.raw}` are not allowed.",
+            if table_expression.is_expandable:
+                statement = self._get_statement(cast(Segments, table_expression))
+                self._eval_clauses(context, statement, result)
+            else:
+                identifier = self._get_identifier(table_expression)
+                bracketed = self._get_bracketed(table_expression)
+                if (
+                    bool(identifier)
+                    and not identifier.get().is_templated
+                    and identifier.get().raw not in self.with_aliases
+                ):
+                    idx = identifier.raw_segments[0].get_start_point_marker().source_slice.start
+                    raw_seg = self._find_raw_at_src_idx(context.segment, idx)
+                    result.append(
+                        LintResult(
+                            anchor=raw_seg,
+                            description=f"Hard codes tables/views "
+                            f"`{raw_seg.raw}` are not allowed.",
+                        )
                     )
-                )
-            # Recursive iteration over nested queries
-            elif bool(bracketed):
-                clause = bracketed.children(
-                    sp.is_type("with_compound_statement")
-                ) or bracketed.select().children(sp.is_type("select_statement")).children(
-                    sp.is_type("from_clause")
-                )
-                self._eval_clauses(context, clause, result)
+                # Recursive iteration over nested queries
+                elif bool(bracketed):
+                    clause = bracketed.children(
+                        sp.is_type("with_compound_statement")
+                    ) or bracketed.select().children(sp.is_type("select_statement")).children(
+                        sp.is_type("from_clause")
+                    )
+                    self._eval_clauses(context, clause, result)
         return result
 
     @classmethod
@@ -183,13 +227,12 @@ class Rule_SD01(BaseRule):
             # Otherwise recurse
             return cls._find_raw_at_src_idx(seg, src_idx)
 
-    def _get_clause_in_bracketed(self, bracketed):
+    def _get_clauses_in_bracketed(self, bracketed: Segments) -> Segments:
+        """Get the clauses inside a bracketed segment"""
         if bracketed.children(sp.is_type("select_statement")):
-            return (
-                bracketed.children(sp.is_type("select_statement"))
-                .children(sp.is_type("from_clause"))
-                .first()
-            )
+            return bracketed.children(sp.is_type("select_statement"))
+        elif bracketed.children(sp.is_type("set_expression")):
+            return bracketed.children(sp.is_type("set_expression"))
         else:
             return bracketed.children(sp.is_type("with_compound_statement"))
 
